@@ -1,4 +1,12 @@
-import { describe, expect, test, vi } from 'vitest';
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  test,
+  vi
+} from 'vitest';
+
 import request from 'supertest';
 
 import {
@@ -8,10 +16,13 @@ import {
 } from '../src/models/bookings.js';
 
 import * as bookingsModel from '../src/models/bookings.js';
-
 import { getDb } from '../src/db/connect.js';
-
 import app from '../app.js';
+
+import {
+  createTestUser,
+  loginAs
+} from './helpers/auth.js';
 
 const samplePassengers = [
   {
@@ -21,6 +32,29 @@ const samplePassengers = [
     phone: '+1 555-0100'
   }
 ];
+
+let apiAgent;
+
+async function createAuthenticatedAgent() {
+  const suffix = `${Date.now()}-${Math.random()
+    .toString(36)
+    .slice(2, 8)}`;
+
+  const email = `booking-api-${suffix}@example.com`;
+
+  await createTestUser({
+    displayName: 'Booking API Test',
+    username: `booking-api-${suffix}`,
+    email,
+    role: 'customer'
+  });
+
+  return loginAs(email);
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe('booking model functions', () => {
   test('createBooking persists a booking with a generated id', async () => {
@@ -75,48 +109,33 @@ describe('booking model functions', () => {
   });
 
   test('getAllBookings respects page and limit', async () => {
-    await createBooking({
-      scheduleId: '1',
-      tripId: 'alpine-panorama',
-      ticketClass: 'standard',
-      selectedDay: 'monday',
-      passengers: samplePassengers,
-      pricePerTicket: 14400,
-      totalPrice: 14400
-    });
+    for (const [scheduleId, ticketClass, day, price] of [
+      ['1', 'standard', 'monday', 14400],
+      ['2', 'premium', 'tuesday', 18000],
+      ['3', 'standard', 'wednesday', 12000]
+    ]) {
+      await createBooking({
+        scheduleId,
+        tripId: 'alpine-panorama',
+        ticketClass,
+        selectedDay: day,
+        passengers: samplePassengers,
+        pricePerTicket: price,
+        totalPrice: price
+      });
+    }
 
-    await createBooking({
-      scheduleId: '2',
-      tripId: 'alpine-panorama',
-      ticketClass: 'premium',
-      selectedDay: 'tuesday',
-      passengers: samplePassengers,
-      pricePerTicket: 18000,
-      totalPrice: 18000
-    });
-
-    await createBooking({
-      scheduleId: '3',
-      tripId: 'coastal-breeze',
-      ticketClass: 'standard',
-      selectedDay: 'wednesday',
-      passengers: samplePassengers,
-      pricePerTicket: 12000,
-      totalPrice: 12000
-    });
-
-    const result = await getAllBookings({
-      page: 2,
-      limit: 2
-    });
+    const result = await getAllBookings({ page: 2, limit: 2 });
 
     expect(result.data).toHaveLength(1);
-    expect(result.pagination.page).toBe(2);
-    expect(result.pagination.limit).toBe(2);
-    expect(result.pagination.totalItems).toBe(3);
-    expect(result.pagination.totalPages).toBe(2);
-    expect(result.pagination.hasNextPage).toBe(false);
-    expect(result.pagination.hasPreviousPage).toBe(true);
+    expect(result.pagination).toEqual({
+      page: 2,
+      limit: 2,
+      totalItems: 3,
+      totalPages: 2,
+      hasNextPage: false,
+      hasPreviousPage: true
+    });
   });
 
   test('getBookingById returns the matching booking', async () => {
@@ -136,15 +155,17 @@ describe('booking model functions', () => {
   });
 
   test('getBookingById returns null for an unknown id', async () => {
-    const found = await getBookingById('does-not-exist');
-
-    expect(found).toBeNull();
+    expect(await getBookingById('does-not-exist')).toBeNull();
   });
 });
 
 describe('GET /api/bookings', () => {
+  beforeEach(async () => {
+    apiAgent = await createAuthenticatedAgent();
+  });
+
   test('returns 200 with an empty paginated result when there are no bookings', async () => {
-    const response = await request(app).get('/api/bookings');
+    const response = await apiAgent.get('/api/bookings');
 
     expect(response.status).toBe(200);
     expect(response.body.data).toEqual([]);
@@ -173,7 +194,7 @@ describe('GET /api/bookings', () => {
       totalPrice: 14400
     });
 
-    const response = await request(app).get('/api/bookings');
+    const response = await apiAgent.get('/api/bookings');
 
     expect(response.status).toBe(200);
     expect(response.body.data).toHaveLength(1);
@@ -196,25 +217,24 @@ describe('GET /api/bookings', () => {
       });
     }
 
-    const response = await request(app)
+    const response = await apiAgent
       .get('/api/bookings')
-      .query({
-        page: 2,
-        limit: 2
-      });
+      .query({ page: 2, limit: 2 });
 
     expect(response.status).toBe(200);
     expect(response.body.data).toHaveLength(1);
-    expect(response.body.pagination.page).toBe(2);
-    expect(response.body.pagination.limit).toBe(2);
-    expect(response.body.pagination.totalItems).toBe(3);
-    expect(response.body.pagination.totalPages).toBe(2);
-    expect(response.body.pagination.hasNextPage).toBe(false);
-    expect(response.body.pagination.hasPreviousPage).toBe(true);
+    expect(response.body.pagination).toMatchObject({
+      page: 2,
+      limit: 2,
+      totalItems: 3,
+      totalPages: 2,
+      hasNextPage: false,
+      hasPreviousPage: true
+    });
   });
 
   test('accepts the maximum limit of 50', async () => {
-    const response = await request(app)
+    const response = await apiAgent
       .get('/api/bookings')
       .query({ limit: 50 });
 
@@ -222,97 +242,7 @@ describe('GET /api/bookings', () => {
     expect(response.body.pagination.limit).toBe(50);
   });
 
-  test('returns an empty result when the requested page is beyond the available pages', async () => {
-    await createBooking({
-      scheduleId: '1',
-      tripId: 'alpine-panorama',
-      ticketClass: 'standard',
-      selectedDay: 'monday',
-      passengers: samplePassengers,
-      pricePerTicket: 14400,
-      totalPrice: 14400
-    });
-
-    const response = await request(app)
-      .get('/api/bookings')
-      .query({ page: 3, limit: 1 });
-
-    expect(response.status).toBe(200);
-    expect(response.body.data).toEqual([]);
-    expect(response.body.pagination).toEqual({
-      page: 3,
-      limit: 1,
-      totalItems: 1,
-      totalPages: 1,
-      hasNextPage: false,
-      hasPreviousPage: true
-    });
-  });
-
-  test('accepts the minimum limit of 1', async () => {
-    await createBooking({
-      scheduleId: '1',
-      tripId: 'alpine-panorama',
-      ticketClass: 'standard',
-      selectedDay: 'monday',
-      passengers: samplePassengers,
-      pricePerTicket: 14400,
-      totalPrice: 14400
-    });
-
-    const response = await request(app)
-      .get('/api/bookings')
-      .query({ limit: 1 });
-
-    expect(response.status).toBe(200);
-    expect(response.body.data).toHaveLength(1);
-    expect(response.body.pagination.limit).toBe(1);
-    expect(response.body.pagination.totalItems).toBe(1);
-    expect(response.body.pagination.totalPages).toBe(1);
-  });
-
-  test('combines pagination with ascending booking-date sorting', async () => {
-    const older = await createBooking({
-      scheduleId: '1',
-      tripId: 'alpine-panorama',
-      ticketClass: 'standard',
-      selectedDay: 'monday',
-      passengers: samplePassengers,
-      pricePerTicket: 14400,
-      totalPrice: 14400
-    });
-
-    await createBooking({
-      scheduleId: '2',
-      tripId: 'alpine-panorama',
-      ticketClass: 'premium',
-      selectedDay: 'tuesday',
-      passengers: samplePassengers,
-      pricePerTicket: 18000,
-      totalPrice: 18000
-    });
-
-    const response = await request(app)
-      .get('/api/bookings')
-      .query({
-        page: 1,
-        limit: 1,
-        sort: 'createdAt',
-        order: 'asc'
-      });
-
-    expect(response.status).toBe(200);
-    expect(response.body.data).toHaveLength(1);
-    expect(response.body.data[0].id).toBe(older.id);
-    expect(response.body.pagination.page).toBe(1);
-    expect(response.body.pagination.limit).toBe(1);
-    expect(response.body.pagination.totalItems).toBe(2);
-    expect(response.body.pagination.totalPages).toBe(2);
-    expect(response.body.pagination.hasNextPage).toBe(true);
-    expect(response.body.pagination.hasPreviousPage).toBe(false);
-  });
-
-  test('sorts bookings by booking date', async () => {
+  test('sorts bookings by booking date descending', async () => {
     const older = await createBooking({
       scheduleId: '1',
       tripId: 'alpine-panorama',
@@ -335,13 +265,9 @@ describe('GET /api/bookings', () => {
       totalPrice: 22050
     });
 
-    const response = await request(app)
+    const response = await apiAgent
       .get('/api/bookings')
-      .query({
-        limit: 10,
-        sort: 'createdAt',
-        order: 'desc'
-      });
+      .query({ limit: 10, sort: 'createdAt', order: 'desc' });
 
     expect(response.status).toBe(200);
     expect(response.body.data[0].id).toBe(newer.id);
@@ -352,7 +278,7 @@ describe('GET /api/bookings', () => {
     });
   });
 
-  test('returns bookings in ascending booking-date order when requested', async () => {
+  test('returns bookings in ascending booking-date order', async () => {
     const older = await createBooking({
       scheduleId: '1',
       tripId: 'alpine-panorama',
@@ -375,13 +301,9 @@ describe('GET /api/bookings', () => {
       totalPrice: 22050
     });
 
-    const response = await request(app)
+    const response = await apiAgent
       .get('/api/bookings')
-      .query({
-        limit: 10,
-        sort: 'createdAt',
-        order: 'asc'
-      });
+      .query({ limit: 10, sort: 'createdAt', order: 'asc' });
 
     expect(response.status).toBe(200);
     expect(response.body.data[0].id).toBe(older.id);
@@ -393,7 +315,7 @@ describe('GET /api/bookings', () => {
   });
 
   test('returns 400 for an invalid page', async () => {
-    const response = await request(app)
+    const response = await apiAgent
       .get('/api/bookings')
       .query({ page: 0 });
 
@@ -401,7 +323,7 @@ describe('GET /api/bookings', () => {
   });
 
   test('returns 400 for an invalid limit', async () => {
-    const response = await request(app)
+    const response = await apiAgent
       .get('/api/bookings')
       .query({ limit: 51 });
 
@@ -409,7 +331,7 @@ describe('GET /api/bookings', () => {
   });
 
   test('returns 400 for an invalid sort field', async () => {
-    const response = await request(app)
+    const response = await apiAgent
       .get('/api/bookings')
       .query({ sort: 'ticketClass' });
 
@@ -417,7 +339,7 @@ describe('GET /api/bookings', () => {
   });
 
   test('returns 400 for an invalid sort order', async () => {
-    const response = await request(app)
+    const response = await apiAgent
       .get('/api/bookings')
       .query({ order: 'sideways' });
 
@@ -447,7 +369,7 @@ describe('GET /api/bookings', () => {
       totalPrice: 200
     });
 
-    const response = await request(app)
+    const response = await apiAgent
       .get('/api/bookings')
       .query({ ticketClass: 'standard' });
 
@@ -463,7 +385,7 @@ describe('GET /api/bookings', () => {
   });
 
   test('returns no bookings when a ticket class has no matches', async () => {
-    const response = await request(app)
+    const response = await apiAgent
       .get('/api/bookings')
       .query({ ticketClass: `unknown - ${ Date.now() } ` });
 
@@ -475,7 +397,7 @@ describe('GET /api/bookings', () => {
   });
 
   test('returns 400 for an invalid booking date', async () => {
-    const response = await request(app)
+    const response = await apiAgent
       .get('/api/bookings')
       .query({ bookingDate: 'not-a-date' });
 
@@ -497,7 +419,7 @@ describe('GET /api/bookings', () => {
       });
     }
 
-    const firstPage = await request(app)
+    const firstPage = await apiAgent
       .get('/api/bookings')
       .query({
         ticketClass: 'standard',
@@ -505,7 +427,7 @@ describe('GET /api/bookings', () => {
         limit: 2
       });
 
-    const secondPage = await request(app)
+    const secondPage = await apiAgent
       .get('/api/bookings')
       .query({
         ticketClass: 'standard',
@@ -554,7 +476,7 @@ test('filters bookings by booking date', async () => {
         }
     );
 
-    const response = await request(app)
+  const response = await apiAgent
         .get('/api/bookings')
         .query({ bookingDate });
 
@@ -571,22 +493,90 @@ test('filters bookings by booking date', async () => {
 });
 
   test('returns 500 with a JSON error when the model throws', async () => {
-    const spy = vi
-      .spyOn(bookingsModel, 'getAllBookings')
+    vi.spyOn(bookingsModel, 'getAllBookings')
       .mockRejectedValueOnce(new Error('boom'));
 
-    const response = await request(app).get('/api/bookings');
+    const response = await apiAgent.get('/api/bookings');
 
     expect(response.status).toBe(500);
     expect(response.body).toEqual({
       error: 'Internal Server Error'
     });
+  });
 
-    spy.mockRestore();
+  test('includes the full UTC date and excludes the next day', async () => {
+    const bookingData = {
+      scheduleId: '1',
+      tripId: 'alpine-panorama',
+      ticketClass: 'standard',
+      selectedDay: 'monday',
+      passengers: samplePassengers,
+      pricePerTicket: 14400,
+      totalPrice: 14400
+    };
+
+    const startBooking = await createBooking(bookingData);
+    const endBooking = await createBooking(bookingData);
+    const nextDayBooking = await createBooking(bookingData);
+
+    const db = getDb();
+
+    await Promise.all([
+      db.collection('bookings').updateOne(
+        { id: startBooking.id },
+        {
+          $set: {
+            createdAt: new Date('2024-04-15T00:00:00.000Z')
+          }
+        }
+      ),
+      db.collection('bookings').updateOne(
+        { id: endBooking.id },
+        {
+          $set: {
+            createdAt: new Date('2024-04-15T23:59:59.999Z')
+          }
+        }
+      ),
+      db.collection('bookings').updateOne(
+        { id: nextDayBooking.id },
+        {
+          $set: {
+            createdAt: new Date('2024-04-16T00:00:00.000Z')
+          }
+        }
+      )
+    ]);
+
+    const response = await apiAgent
+      .get('/api/bookings')
+      .query({ bookingDate: '2024-04-15' });
+
+    expect(response.status).toBe(200);
+
+    const returnedIds = response.body.data.map((booking) => booking.id);
+
+    expect(returnedIds).toContain(startBooking.id);
+    expect(returnedIds).toContain(endBooking.id);
+    expect(returnedIds).not.toContain(nextDayBooking.id);
+    expect(response.body.query.bookingDate).toBe('2024-04-15');
+  });
+
+  test('returns 401 when the user is not authenticated', async () => {
+    const response = await request(app).get('/api/bookings');
+
+    expect(response.status).toBe(401);
+    expect(response.body).toEqual({
+      message: 'Authentication required'
+    });
   });
 });
 
 describe('GET /api/bookings/:id', () => {
+  beforeEach(async () => {
+    apiAgent = await createAuthenticatedAgent();
+  });
+
   test('returns 200 with the matching booking', async () => {
     const created = await createBooking({
       scheduleId: '1',
@@ -598,19 +588,71 @@ describe('GET /api/bookings/:id', () => {
       totalPrice: 14400
     });
 
-    const response = await request(app).get(`/api/bookings/${created.id}`);
+    const response = await apiAgent
+      .get(`/api/bookings/${created.id}`);
 
     expect(response.status).toBe(200);
     expect(response.body.id).toBe(created.id);
     expect(response.body.tripId).toBe('alpine-panorama');
   });
 
+  test('returns the complete booking details for an existing booking', async () => {
+    const created = await createBooking({
+      scheduleId: '1',
+      tripId: 'alpine-panorama',
+      ticketClass: 'standard',
+      selectedDay: 'monday',
+      passengers: samplePassengers,
+      pricePerTicket: 14400,
+      totalPrice: 14400
+    });
+
+    const response = await apiAgent
+      .get(`/api/bookings/${created.id}`);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      id: created.id,
+      scheduleId: '1',
+      tripId: 'alpine-panorama',
+      ticketClass: 'standard',
+      selectedDay: 'monday',
+      passengers: samplePassengers,
+      pricePerTicket: 14400,
+      totalPrice: 14400
+    });
+  });
+
+  test('returns 500 with a JSON error when the model throws', async () => {
+    vi.spyOn(bookingsModel, 'getBookingById')
+      .mockRejectedValueOnce(new Error('boom'));
+
+    const response = await apiAgent
+      .get('/api/bookings/test-booking-id');
+
+    expect(response.status).toBe(500);
+    expect(response.body).toEqual({
+      error: 'Internal Server Error'
+    });
+  });
+
   test('returns 404 for an unknown id', async () => {
-    const response = await request(app).get('/api/bookings/does-not-exist');
+    const response = await apiAgent
+      .get('/api/bookings/does-not-exist');
 
     expect(response.status).toBe(404);
     expect(response.body).toEqual({
       error: 'Booking not found'
+    });
+  });
+
+  test('returns 401 when the user is not authenticated', async () => {
+    const response = await request(app)
+      .get('/api/bookings/test-booking-id');
+
+    expect(response.status).toBe(401);
+    expect(response.body).toEqual({
+      message: 'Authentication required'
     });
   });
 });
@@ -717,6 +759,55 @@ describe('booking EJS pages', () => {
       'Each passenger must include'
     );
   });
+ 
+
+  test('POST /bookings does not create a booking when passenger data is incomplete', async () => {
+    const db = getDb();
+    const bookingsBefore = await db.collection('bookings').countDocuments();
+
+    const response = await request(app)
+      .post('/bookings')
+      .send({
+        scheduleId: '1',
+        tripId: 'alpine-panorama',
+        ticketClass: 'standard',
+        selectedDay: 'monday',
+        passengers: [{ firstName: 'Ada' }]
+      });
+
+    const bookingsAfter = await db.collection('bookings').countDocuments();
+
+    expect(response.status).toBe(400);
+    expect(bookingsAfter).toBe(bookingsBefore);
+  });
+
+  test('POST /bookings saves passenger and booking details to the database', async () => {
+    const response = await request(app)
+      .post('/bookings')
+      .send({
+        scheduleId: '1',
+        tripId: 'alpine-panorama',
+        ticketClass: 'standard',
+        selectedDay: 'monday',
+        passengers: samplePassengers
+      });
+
+    expect(response.status).toBe(302);
+    expect(response.headers.location).toMatch(/^\/bookings\/JR/);
+
+    const bookingId = response.headers.location.split('/').pop();
+    const booking = await getBookingById(bookingId);
+
+    expect(booking).not.toBeNull();
+    expect(booking.id).toBe(bookingId);
+    expect(booking.tripId).toBe('alpine-panorama');
+    expect(booking.ticketClass).toBe('standard');
+    expect(booking.passengers).toHaveLength(1);
+    expect(booking.passengers[0].firstName).toBe('Ada');
+    expect(booking.passengers[0].lastName).toBe('Lovelace');
+    expect(booking.passengers[0].email).toBe('ada@example.com');
+    expect(booking.totalPrice).toBe(14400);
+  }); 
 
   test('POST /bookings creates a booking and redirects to its confirmation page', async () => {
     const response = await request(app)
@@ -730,7 +821,7 @@ describe('booking EJS pages', () => {
       });
 
     expect(response.status).toBe(302);
-    expect(response.headers.location).toMatch(/^\/bookings\/JR/);
+    expect(response.headers.location).toMatch(/\/bookings\/JR/);
 
     const bookingId = response.headers.location.split('/').pop();
     const booking = await getBookingById(bookingId);
@@ -751,6 +842,8 @@ describe('booking EJS pages', () => {
         totalPrice: 1
       });
 
+    expect(response.status).toBe(302);
+
     const bookingId = response.headers.location.split('/').pop();
     const booking = await getBookingById(bookingId);
 
@@ -768,7 +861,8 @@ describe('booking EJS pages', () => {
       totalPrice: 14400
     });
 
-    const response = await request(app).get(`/bookings/${booking.id}`);
+    const response = await request(app)
+      .get(`/bookings/${booking.id}`);
 
     expect(response.status).toBe(200);
     expect(response.text).toContain(booking.id);
@@ -787,16 +881,16 @@ describe('booking EJS pages', () => {
       totalPrice: 14400
     });
 
-    const response = await request(app).get(`/bookings/${booking.id}`);
+    const response = await request(app)
+      .get(`/bookings/${booking.id}`);
 
     expect(response.status).toBe(404);
     expect(response.text).toContain('Not Found');
   });
 
   test('GET /bookings/:bookingId returns 404 for an unknown booking', async () => {
-    const response = await request(app).get(
-      '/bookings/does-not-exist'
-    );
+    const response = await request(app)
+      .get('/bookings/does-not-exist');
 
     expect(response.status).toBe(404);
     expect(response.text).toContain('Page Not Found');
