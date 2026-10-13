@@ -57,4 +57,3 @@ describe("GET /api/trips/:id", () => {
         });
     });
 });
-
