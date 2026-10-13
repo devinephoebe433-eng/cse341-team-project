@@ -26,9 +26,11 @@ import {
 
 import {
     getUsers,
+    getUserById,
     updateUserById,
     deleteUserById
 } from "../controllers/users.js";
+
 import { requireApiLogin } from "../middleware/auth.js";
 import { requireApiSelfOrAdmin } from "../middleware/ownership.js";
 
@@ -66,13 +68,45 @@ router.get("/trains/:id", getTrainById);
  * @swagger
  * /api/trips:
  *   get:
- *     summary: Returns all trips
+ *     summary: Returns paginated and filtered trips
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *           minimum: 1
+ *         description: Page number
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 10
+ *           minimum: 1
+ *           maximum: 50
+ *         description: Number of trips per page
+ *       - in: query
+ *         name: region
+ *         schema:
+ *           type: string
+ *         description: Filter trips by region
+ *       - in: query
+ *         name: season
+ *         schema:
+ *           type: string
+ *         description: Filter trips by best season
+ *       - in: query
+ *         name: q
+ *         schema:
+ *           type: string
+ *         description: Search trip names and descriptions
  *     responses:
  *       200:
- *         description: A list of trips
+ *         description: Paginated and filtered list of trips
+ *       400:
+ *         description: Invalid query parameters
  */
 router.get("/trips", getAllTrips);
-
 /**
  * @swagger
  * /api/trips/{id}:
@@ -174,6 +208,8 @@ router.get(
  * /api/bookings:
  *   get:
  *     summary: Returns a paginated list of bookings
+ *     security:
+ *       - cookieAuth: []
  *     parameters:
  *       - in: query
  *         name: page
@@ -213,16 +249,20 @@ router.get(
  *         description: A page of bookings with pagination metadata.
  *       400:
  *         description: Invalid pagination or sorting parameters.
+ *       401:
+ *         description: Authentication required.
  *       500:
  *         description: Internal server error.
  */
-router.get("/bookings", getAllBookings);
+router.get("/bookings", requireApiLogin, getAllBookings);
 
 /**
  * @swagger
  * /api/bookings/{id}:
  *   get:
  *     summary: Returns a booking by ID
+ *     security:
+ *       - cookieAuth: []
  *     parameters:
  *       - in: path
  *         name: id
@@ -232,12 +272,14 @@ router.get("/bookings", getAllBookings);
  *     responses:
  *       200:
  *         description: A single booking object
+ *       401:
+ *         description: Authentication required.
  *       404:
  *         description: Booking not found
  *       500:
  *         description: Internal server error
  */
-router.get("/bookings/:id", getBookingById);
+router.get("/bookings/:id", requireApiLogin, getBookingById);
 
 /**
  * @swagger
@@ -330,6 +372,44 @@ router.get("/users", requireApiLogin, getUsers);
 /**
  * @swagger
  * /api/users/{id}:
+ *   get:
+ *     summary: Returns a user by ID
+ *     description: Any user can read their own record. Admins can read any user.
+ *     security:
+ *       - cookieAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: A single user (the password hash is never included)
+ *         content:
+ *           application/json:
+ *             example:
+ *               _id: 66f1a2b3c4d5e6f7a8b9c0d1
+ *               displayName: Ada Lovelace
+ *               username: ada
+ *               email: ada@example.com
+ *               role: customer
+ *       400:
+ *         description: Invalid user id
+ *       401:
+ *         description: Not logged in
+ *       403:
+ *         description: Not allowed to read this user
+ *       404:
+ *         description: User not found
+ *       500:
+ *         description: Internal server error
+ */
+router.get("/users/:id", requireApiLogin, requireApiSelfOrAdmin, getUserById);
+
+/**
+ * @swagger
+ * /api/users/{id}:
  *   put:
  *     summary: Updates a user
  *     description: Any user can update their own record. Admins can update any user and change roles. The last admin cannot be demoted.
@@ -374,7 +454,12 @@ router.get("/users", requireApiLogin, getUsers);
  *       500:
  *         description: Internal server error
  */
-router.put("/users/:id", requireApiLogin, requireApiSelfOrAdmin, updateUserById);
+router.put(
+    "/users/:id",
+    requireApiLogin,
+    requireApiSelfOrAdmin,
+    updateUserById
+);
 
 /**
  * @swagger
@@ -406,6 +491,11 @@ router.put("/users/:id", requireApiLogin, requireApiSelfOrAdmin, updateUserById)
  *       500:
  *         description: Internal server error
  */
-router.delete("/users/:id", requireApiLogin, requireApiSelfOrAdmin, deleteUserById);
+router.delete(
+    "/users/:id",
+    requireApiLogin,
+    requireApiSelfOrAdmin,
+    deleteUserById
+);
 
 export default router;

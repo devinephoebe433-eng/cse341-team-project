@@ -11,9 +11,10 @@ import { getRoleByName } from "../models/roles.js";
 const LAST_ADMIN_MESSAGE =
   "You can't remove the last administrator. Promote another user to admin first.";
 const EDITABLE_FIELDS = ["displayName", "username", "email"];
-const MAX_FIELD_LENGTHS = { displayName: 100, username: 50, email: 254 };
+// Exported so registration (controllers/auth.js) applies the same rules.
+export const MAX_FIELD_LENGTHS = { displayName: 100, username: 50, email: 254 };
 // Non-overlapping segments keep matching linear on hostile input.
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/;
+export const EMAIL_PATTERN =/^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/;
 
 const DEFAULT_PAGE = 1;
 const DEFAULT_LIMIT = 10;
@@ -150,6 +151,30 @@ export async function getUsers(req, res) {
     });
   } catch (error) {
     console.error("Error fetching users:", error);
+
+    return res.status(500).json({
+      error: "Internal Server Error"
+    });
+  }
+}
+
+export async function getUserById(req, res) {
+  const { id } = req.params;
+
+  if (!mongoose.isValidObjectId(id)) {
+    return res.status(400).json({ error: "Invalid user id." });
+  }
+
+  try {
+    const user = await fetchUserById(id);
+
+    if (!user) {
+      return res.status(404).json({ error: "User not found." });
+    }
+
+    return res.status(200).json(user);
+  } catch (error) {
+    console.error("Error fetching user:", error);
 
     return res.status(500).json({
       error: "Internal Server Error"
