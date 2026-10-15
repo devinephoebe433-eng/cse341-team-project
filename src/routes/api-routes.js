@@ -74,6 +74,13 @@ const router = express.Router();
  *           maximum: 50
  *           default: 10
  *         description: Number of trains per page.
+ *       - in: query
+ *         name: q
+ *         schema:
+ *           type: string
+ *           minLength: 1
+ *           maxLength: 100
+ *         description: Case-insensitive keyword matched against train names and operators.
  *     responses:
  *       200:
  *         description: A page of trains with pagination metadata.
@@ -81,6 +88,8 @@ const router = express.Router();
  *           application/json:
  *             example:
  *               trains: []
+ *               query:
+ *                 q: jr
  *               pagination:
  *                 page: 1
  *                 limit: 10

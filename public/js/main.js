@@ -45,6 +45,8 @@ const hookTrainsCatalog = async () => {
     const previousButton = document.getElementById("trains-previous");
     const nextButton = document.getElementById("trains-next");
     const pageStatusEl = document.getElementById("trains-page-status");
+    const searchForm = document.getElementById("trains-search");
+    const searchInput = document.getElementById("trains-search-input");
 
     if (!listEl || !templateEl) {
         return;
@@ -53,6 +55,7 @@ const hookTrainsCatalog = async () => {
     const PAGE_SIZE = 10;
     let currentPage = 1;
     let totalPages = 1;
+    let searchTerm = "";
 
     const loadTrains = async (page) => {
         try {
@@ -65,7 +68,16 @@ const hookTrainsCatalog = async () => {
                 errorEl.hidden = true;
             }
 
-            const response = await fetch(`/api/trains?page=${page}&limit=${PAGE_SIZE}`);
+            const params = new URLSearchParams({
+                page: String(page),
+                limit: String(PAGE_SIZE)
+            });
+
+            if (searchTerm) {
+                params.set("q", searchTerm);
+            }
+
+            const response = await fetch(`/api/trains?${params.toString()}`);
 
             if (!response.ok) {
                 throw new Error(`Failed to load trains (${response.status})`);
@@ -154,6 +166,19 @@ const hookTrainsCatalog = async () => {
         if (currentPage < totalPages) {
             loadTrains(currentPage + 1);
         }
+    });
+
+    searchForm?.addEventListener("submit", (event) => {
+        event.preventDefault();
+        searchTerm = searchInput.value.trim();
+        loadTrains(1);
+    });
+
+    searchForm?.addEventListener("reset", (event) => {
+        event.preventDefault();
+        searchInput.value = "";
+        searchTerm = "";
+        loadTrains(1);
     });
 
     await loadTrains(currentPage);

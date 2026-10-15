@@ -93,4 +93,54 @@ describe('GET /api/trains', () => {
       'limit'
     ]);
   });
+
+  test('searches train names and operators case-insensitively', async () => {
+    const nameResponse = await request(app).get('/api/trains?q=steam');
+    const operatorResponse = await request(app).get('/api/trains?q=jr');
+
+    expect(nameResponse.status).toBe(200);
+    expect(nameResponse.body.trains.map((train) => train.id)).toEqual(['steam-c11']);
+    expect(operatorResponse.body.trains.map((train) => train.id)).toEqual(
+      expect.arrayContaining(['series-e353', 'series-287', 'kiha-261'])
+    );
+    expect(operatorResponse.body.trains).toHaveLength(3);
+  });
+
+  test('combines keyword search with pagination metadata', async () => {
+    const response = await request(app).get('/api/trains?q=jr&limit=2&page=2');
+
+    expect(response.status).toBe(200);
+    expect(response.body.trains).toHaveLength(1);
+    expect(response.body.query).toEqual({ q: 'jr' });
+    expect(response.body.pagination).toEqual({
+      page: 2,
+      limit: 2,
+      totalItems: 3,
+      totalPages: 2,
+      hasNextPage: false,
+      hasPreviousPage: true
+    });
+  });
+
+  test('returns an empty paginated result when no train matches', async () => {
+    const response = await request(app).get('/api/trains?q=maglev');
+
+    expect(response.status).toBe(200);
+    expect(response.body.trains).toEqual([]);
+    expect(response.body.pagination.totalItems).toBe(0);
+    expect(response.body.pagination.totalPages).toBe(0);
+  });
+
+  test('rejects empty, repeated, and oversized search values', async () => {
+    const emptyResponse = await request(app).get('/api/trains?q=');
+    const repeatedResponse = await request(app).get('/api/trains?q=jr&q=steam');
+    const oversizedResponse = await request(app).get(`/api/trains?q=${'a'.repeat(101)}`);
+
+    expect(emptyResponse.status).toBe(400);
+    expect(repeatedResponse.status).toBe(400);
+    expect(oversizedResponse.status).toBe(400);
+    expect(emptyResponse.body.errors[0].field).toBe('q');
+    expect(repeatedResponse.body.errors[0].field).toBe('q');
+    expect(oversizedResponse.body.errors[0].field).toBe('q');
+  });
 });

@@ -3,6 +3,7 @@ import { getDb } from '../db/connect.js';
 const DEFAULT_PAGE = 1;
 const DEFAULT_LIMIT = 10;
 const MAX_LIMIT = 50;
+const MAX_SEARCH_LENGTH = 100;
 
 const parsePositiveInteger = (value, defaultValue) => {
     if (value === undefined) {
@@ -18,6 +19,8 @@ const parsePositiveInteger = (value, defaultValue) => {
     return parsed;
 };
 
+const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 const trainsPage = (req, res) => {
     res.render('trains', { title: 'Trains' });
 };
@@ -26,6 +29,7 @@ const trainsApi = async (req, res, next) => {
     try {
         const page = parsePositiveInteger(req.query.page, DEFAULT_PAGE);
         const limit = parsePositiveInteger(req.query.limit, DEFAULT_LIMIT);
+        const rawSearch = req.query.q;
 
         const errors = [];
 
@@ -43,14 +47,38 @@ const trainsApi = async (req, res, next) => {
             });
         }
 
+        if (Array.isArray(rawSearch)) {
+            errors.push({
+                field: 'q',
+                message: 'q must be a single search value.'
+            });
+        } else if (rawSearch !== undefined &&
+            (typeof rawSearch !== 'string' ||
+                rawSearch.trim().length === 0 ||
+                rawSearch.trim().length > MAX_SEARCH_LENGTH)) {
+            errors.push({
+                field: 'q',
+                message: `q must be between 1 and ${MAX_SEARCH_LENGTH} characters.`
+            });
+        }
+
         if (errors.length > 0) {
             return res.status(400).json({ errors });
         }
 
+        const q = typeof rawSearch === 'string' ? rawSearch.trim() : undefined;
+        const filter = q
+            ? {
+                $or: [
+                    { name: { $regex: escapeRegex(q), $options: 'i' } },
+                    { operator: { $regex: escapeRegex(q), $options: 'i' } }
+                ]
+            }
+            : {};
         const collection = getDb().collection('trains');
-        const totalItems = await collection.countDocuments({});
+        const totalItems = await collection.countDocuments(filter);
         const trains = await collection
-            .find({})
+            .find(filter)
             .sort({ name: 1, id: 1 })
             .skip((page - 1) * limit)
             .limit(limit)
@@ -59,6 +87,7 @@ const trainsApi = async (req, res, next) => {
 
         return res.json({
             trains,
+            ...(q ? { query: { q } } : {}),
             pagination: {
                 page,
                 limit,
